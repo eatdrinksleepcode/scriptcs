@@ -122,6 +122,6 @@
       <Name>ScriptCs.Core</Name>
     </ProjectReference>
   </ItemGroup>
-  <Import Project="..\..\build\ScriptCs.Common.props" />
+  <Import Project="$(SolutionDir)build\ScriptCs.Common.props" />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

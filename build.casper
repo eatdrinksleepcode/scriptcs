@@ -1,0 +1,76 @@
+import Casper;
+import Casper.Solution;
+
+configuration = 'Release'
+
+baseArtifactsDir = Directory('artifacts')
+artifactsDir = baseArtifactsDir.Directory(configuration)
+packageOutputDir = baseArtifactsDir.Directory(configuration)
+nugetExeFile = Directory('.nuget').File('NuGet.exe')
+commonVersionInfoFile = Directory('common').File('CommonVersionInfo.cs')
+commonVersionInfoBackupFile = File(commonVersionInfoFile.Path + '.bak')
+srcDir = Directory('src')
+
+majorVersion = 0
+minorVersion = 16
+patchVersion = 1
+
+assemblyVersion = "$(majorVersion).$(minorVersion).0"
+assemblyInformationalVersion = "$(majorVersion).$(minorVersion).$(patchVersion)"
+packageVersion = assemblyInformationalVersion
+
+ConfigureFromSolution('ScriptCs.sln') // Additional properties
+
+task _CleanSolution(MSBuild,
+			DependsOn: [_CleanSolution, _CleanArtifacts]
+			ProjectFile: 'ScriptCs.sln',
+			Targets: ['Clean']
+			// Parallel
+			)
+
+task _CleanArtifacts:
+	artifactsDir.Delete()
+
+task Clean(DependsOn: [_CleanSolution, _CleanArtifacts]):
+	artifactsDir.Create()
+
+task BackupCommonVersionInfo:
+	commonVersionInfoFile.CopyTo(commonVersionInfoBackupFile)
+
+task UpdateProjectVersions(DependsOn: [BackupCommonVersionInfo]):
+	commonVersionInfoFile.WriteAllText("""
+[assembly: System.Reflection.AssemblyVersion("$(assemblyVersion)")]
+[assembly: System.Reflection.AssemblyInformationalVersion("$(assemblyInformationalVersion)")]
+""")
+
+task Build(MSBuild,
+			DependsOn: [RestorePackages, UpdateProjectVersions],
+			ProjectFile: 'ScriptCs.sln',
+			Targets: ['Build'])
+
+task RestoreCommonVersionInfo(DependsOn: [Build]):
+	// Condition: commonVersionInfoBackupFile.Exists
+	commonVersionInfoBackupFile.MoveTo(commonVersionInfoFile)
+
+packagedProjects = (
+	srcDir.Directory('ScriptCs.Contracts').File('ScriptCs.Contracts.csproj'),
+	srcDir.Directory('ScriptCs.Core').File('ScriptCs.Core.csproj'),
+	srcDir.Directory('ScriptCs.Hosting').File('ScriptCs.Hosting.csproj'),
+	srcDir.Directory('ScriptCs.Engine.Roslyn').File('ScriptCs.Engine.Roslyn.csproj'),
+	srcDir.Directory('ScriptCs.Engine.Mono').File('ScriptCs.Engine.Mono.csproj'),
+)
+
+nugetParameters = "-Version $(packageVersion) -Symbols -Verbosity quiet -NoPackageAnalysis -OutputDirectory \"$(packageOutputDir.Path)\" -p Configuration=$(configuration)"
+
+task BuildNuGetPackages:
+	for proj in packagedProjects:
+		Exec(Executable: nugetExeFile.Path, Arguments: "pack \"$(proj.Path)\" $(nugetParameters)").Execute(fileSystem)
+
+task BuildChocolateyPackage:
+	Exec(Executable: nugetExeFile.Path,
+		 Arguments: "pack \"$(srcDir.Directory('ScriptCs').Directory('Properties').File('scriptcs.nuspec').Path)\" -BasePath \"$(Directory('src').Directory('ScriptCs').Path)\" $(nugetParameters)"
+	).Execute(fileSystem)
+
+task Package(DependsOn: [Test, BuildNuGetPackages, BuildChocolateyPackage])
+
+task FullBuild(DependsOn: [Clean, Build, Test, Package, RestoreCommonVersionInfo])
